@@ -42,7 +42,9 @@ export const AI_OPERATION_COSTS = {
   TEXT_GENERATION_GPT35: 1,    // Простая генерация текста (GPT-3.5)
   TEXT_GENERATION_GPT4: 5,     // Продвинутая генерация текста (GPT-4)
   IMAGE_GENERATION_BASIC: 3,   // Базовая генерация изображения
-  IMAGE_GENERATION_HD: 7       // HD генерация изображения
+  IMAGE_GENERATION_HD: 7,       // HD генерация изображения,
+  TEXT_FROM_IMAGE: 2,
+  IMAGE_FROM_IMAGE: 3
 };
 
 export class CreditService {
