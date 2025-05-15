@@ -41,8 +41,7 @@ export const upload = multer({
   }
 });
 
-// Альтернативная реализация с использованием внешних сервисов
-// Эту функцию можно использовать вместо uploadImage, если нужно
+// Используем локальное хранение файлов вместо внешнего сервиса
 export const uploadImageToExternalService = async (req: Request, res: Response): Promise<void> => {
   try {
     if (!req.file) {
@@ -56,34 +55,25 @@ export const uploadImageToExternalService = async (req: Request, res: Response):
     // Путь к загруженному файлу
     const filePath = req.file.path;
     
-    // Создаем FormData для загрузки на внешний сервис
-    const formData = new FormData();
-    formData.append('image', fs.createReadStream(filePath));
+    // Формируем URL к загруженному файлу
+    const baseUrl = process.env.NODE_ENV === 'production' 
+      ? process.env.API_BASE_URL || req.protocol + '://' + req.get('host')
+      : 'http://localhost:' + (process.env.PORT || 5000);
     
-    // Используем Imgur API для загрузки изображения
-    const response = await axios.post('https://api.imgur.com/3/image', formData, {
-      headers: {
-        ...formData.getHeaders(),
-        // Бесплатный анонимный Client ID для Imgur
-        'Authorization': 'Client-ID 546c25a59c58ad7'
-      }
+    // Путь относительно корня проекта
+    const relativePath = path.relative(path.join(__dirname, '../..'), filePath).replace(/\\/g, '/');
+    const imageUrl = `${baseUrl}/${relativePath}`;
+    
+    // Возвращаем URL к загруженному изображению
+    res.status(200).json({
+      success: true,
+      imageUrl: imageUrl
     });
     
-    // Удаляем временный файл
-    fs.unlinkSync(filePath);
-    
-    if (response.data.success) {
-      res.status(200).json({
-        success: true,
-        imageUrl: response.data.data.link
-      });
-    } else {
-      throw new Error('Не удалось загрузить изображение на внешний сервис');
-    }
   } catch (error) {
-    console.error('Error uploading image to external service:', error);
+    console.error('Error uploading image:', error);
     
-    // Если есть загруженный файл, удаляем его
+    // Если есть загруженный файл, удаляем его в случае ошибки
     if (req.file && req.file.path) {
       fs.unlinkSync(req.file.path);
     }
