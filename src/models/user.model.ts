@@ -138,7 +138,7 @@ const UserSchema = new Schema<IUser>(
     },
     aiCredits: {
       type: Number,
-      default: 50 // Бесплатный план по умолчанию имеет 50 кредитов
+      default: 10 // Бесплатный план по умолчанию имеет 10 кредитов
     },
     totalCreditsUsed: {
       type: Number,
