@@ -6,17 +6,32 @@ import path from 'path';
 import fs from 'fs';
 import { v4 as uuidv4 } from 'uuid';
 
+// Создадим папку uploads/drafts, если её нет
+const draftsDir = path.join(__dirname, '../../uploads/drafts');
+if (!fs.existsSync(draftsDir)) {
+  fs.mkdirSync(draftsDir, { recursive: true });
+}
+
 // Настройка multer для обработки загруженных файлов
 const storage = multer.diskStorage({
   destination: (req: Request, file: Express.Multer.File, cb: Function) => {
-    const uploadDir = path.join(__dirname, '../../uploads');
+    // Проверяем URL запроса, чтобы определить, куда сохранять файл
+    console.log('Original URL:', req.originalUrl);
     
-    // Создаем директорию, если её нет
-    if (!fs.existsSync(uploadDir)) {
-      fs.mkdirSync(uploadDir, { recursive: true });
+    if (req.originalUrl.includes('/api/drafts/upload-image')) {
+      // Сохраняем в uploads/drafts для маршрута черновиков
+      cb(null, draftsDir);
+    } else {
+      // Для остальных запросов сохраняем в общую папку uploads
+      const uploadDir = path.join(__dirname, '../../uploads');
+      
+      // Создаем директорию, если её нет
+      if (!fs.existsSync(uploadDir)) {
+        fs.mkdirSync(uploadDir, { recursive: true });
+      }
+      
+      cb(null, uploadDir);
     }
-    
-    cb(null, uploadDir);
   },
   filename: (req: Request, file: Express.Multer.File, cb: Function) => {
     // Генерируем уникальное имя файла

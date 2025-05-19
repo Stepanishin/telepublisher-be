@@ -11,6 +11,7 @@ import stripeRoutes from './routes/stripe.routes';
 import uploadRoutes from './routes/upload.routes';
 import scheduledPostRoutes from './routes/scheduled-post.routes';
 import scheduledPollRoutes from './routes/scheduled-poll.routes';
+import draftRoutes from './routes/draft.routes';
 import CreditService from './services/credit.service';
 import schedulerService from './services/scheduler.service';
 import path from 'path';
@@ -65,6 +66,7 @@ app.use('/api/ai', aiRoutes);
 app.use('/api/upload', uploadRoutes);
 app.use('/api/scheduled-posts', scheduledPostRoutes);
 app.use('/api/scheduled-polls', scheduledPollRoutes);
+app.use('/api/drafts', draftRoutes);
 
 // Default route
 app.get('/', (_req: Request, res: Response) => {

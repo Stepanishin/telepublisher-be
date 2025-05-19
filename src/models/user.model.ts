@@ -26,6 +26,49 @@ const ChannelSchema = new Schema<IChannel>({
   }
 }, { _id: true });
 
+// Draft interface
+export interface IDraft {
+  _id?: mongoose.Types.ObjectId;
+  title: string;
+  content: string;
+  imageUrl?: string;
+  imageUrls?: string[];
+  tags?: string[];
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+// Draft schema
+const DraftSchema = new Schema<IDraft>(
+  {
+    title: {
+      type: String,
+      required: true,
+      trim: true,
+    },
+    content: {
+      type: String,
+      required: true,
+    },
+    imageUrl: {
+      type: String,
+      trim: true,
+    },
+    imageUrls: {
+      type: [String],
+      default: [],
+    },
+    tags: {
+      type: [String],
+      default: [],
+    },
+  },
+  { 
+    timestamps: true,
+    _id: true 
+  }
+);
+
 // Subscription types
 export enum SubscriptionType {
   FREE = 'free',
@@ -82,10 +125,12 @@ export interface IUser extends Document {
   lastName?: string;
   photoUrl?: string;
   channels: IChannel[];
+  drafts?: IDraft[];
   subscription: ISubscription;
   aiCredits: number;
   totalCreditsUsed: number;
   creditsResetDate?: Date;
+  storageUsed: number; // Хранилище, использованное для изображений (в байтах)
   createdAt: Date;
   updatedAt: Date;
 }
@@ -127,6 +172,10 @@ const UserSchema = new Schema<IUser>(
       type: [ChannelSchema],
       default: [],
     },
+    drafts: {
+      type: [DraftSchema],
+      default: [],
+    },
     subscription: {
       type: SubscriptionSchema,
       default: () => ({
@@ -151,6 +200,10 @@ const UserSchema = new Schema<IUser>(
         date.setMonth(date.getMonth() + 1);
         return date;
       }
+    },
+    storageUsed: {
+      type: Number,
+      default: 0 // Используемое хранилище в байтах
     }
   },
   {
