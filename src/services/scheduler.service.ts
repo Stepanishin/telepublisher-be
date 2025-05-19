@@ -5,10 +5,12 @@ import User from '../models/user.model';
 import { publishToTelegram } from './telegram.service';
 import { TelegramService } from './telegram.service';
 import mongoose from 'mongoose';
+import { cleanupOldImages } from './cleanup.service';
 
 class SchedulerService {
   private running: boolean = false;
-  private job: cron.ScheduledTask | null = null;
+  private postsPollsJob: cron.ScheduledTask | null = null;
+  private cleanupJob: cron.ScheduledTask | null = null;
 
   /**
    * Start the scheduler
@@ -19,8 +21,8 @@ class SchedulerService {
       return;
     }
 
-    // Schedule the task to run every minute
-    this.job = cron.schedule('* * * * *', async () => {
+    // Schedule the task to run every minute for posts and polls
+    this.postsPollsJob = cron.schedule('* * * * *', async () => {
       try {
         await this.processScheduledPosts();
         await this.processScheduledPolls();
@@ -29,20 +31,42 @@ class SchedulerService {
       }
     });
 
+    // Schedule image cleanup to run once per day at midnight (0 0 * * *)
+    this.cleanupJob = cron.schedule('0 0 * * *', async () => {
+      try {
+        console.log('Running daily image cleanup...');
+        await cleanupOldImages();
+        console.log('Daily image cleanup completed');
+      } catch (error) {
+        console.error('Error in image cleanup service:', error);
+      }
+    });
+
     this.running = true;
     console.log('Scheduler started successfully');
+    
+    // Run an initial cleanup on startup
+    cleanupOldImages()
+      .then(() => console.log('Initial image cleanup completed'))
+      .catch(err => console.error('Error during initial image cleanup:', err));
   }
 
   /**
    * Stop the scheduler
    */
   public stop(): void {
-    if (this.job) {
-      this.job.stop();
-      this.job = null;
-      this.running = false;
-      console.log('Scheduler stopped');
+    if (this.postsPollsJob) {
+      this.postsPollsJob.stop();
+      this.postsPollsJob = null;
     }
+    
+    if (this.cleanupJob) {
+      this.cleanupJob.stop();
+      this.cleanupJob = null;
+    }
+    
+    this.running = false;
+    console.log('Scheduler stopped');
   }
 
   /**
