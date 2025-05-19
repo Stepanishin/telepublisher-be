@@ -607,7 +607,7 @@ export const uploadDraftImage = async (req: Request, res: Response): Promise<voi
       return;
     }
     
-    // Файл уже сохранен multer'ом (либо в /uploads/drafts/, либо в /uploads/)
+    // Файл уже сохранен multer'ом (должен быть в /uploads/drafts/)
     const originalPath = req.file.path;
     const filename = path.basename(originalPath);
     
@@ -616,23 +616,43 @@ export const uploadDraftImage = async (req: Request, res: Response): Promise<voi
       ? process.env.API_BASE_URL || req.protocol + '://' + req.get('host')
       : 'http://localhost:' + (process.env.PORT || 5000);
     
-    // Определяем, в какой папке фактически сохранен файл
-    const draftsPath = path.join(__dirname, '../../uploads/drafts', filename);
-    const rootPath = path.join(__dirname, '../../uploads', filename);
-    let imageUrl;
+    // Получаем путь к директории черновиков
+    const draftsDir = path.join(__dirname, '../../uploads/drafts');
     
-    if (fs.existsSync(draftsPath)) {
-      // Файл в папке /uploads/drafts/
-      imageUrl = `${baseUrl}/uploads/drafts/${filename}`;
-      console.log('File saved in drafts folder');
-    } else if (fs.existsSync(rootPath)) {
-      // Файл в корневой папке /uploads/
-      imageUrl = `${baseUrl}/uploads/${filename}`;
-      console.log('File saved in root uploads folder');
+    // Проверяем, находится ли файл в директории черновиков
+    let imageUrl;
+    const isInDraftsDir = originalPath.includes('/uploads/drafts/') || originalPath.includes('\\uploads\\drafts\\');
+    
+    if (!isInDraftsDir) {
+      // Если файл был сохранен в основную директорию, перемещаем его в директорию черновиков
+      console.warn('WARNING: Draft image was not saved in drafts directory! Moving it...');
+      
+      // Создаем директорию черновиков если она не существует
+      if (!fs.existsSync(draftsDir)) {
+        fs.mkdirSync(draftsDir, { recursive: true });
+      }
+      
+      const newPath = path.join(draftsDir, filename);
+      console.log(`Moving file from ${originalPath} to ${newPath}`);
+      
+      try {
+        // Копируем файл
+        fs.copyFileSync(originalPath, newPath);
+        // Удаляем оригинал
+        fs.unlinkSync(originalPath);
+        console.log(`Successfully moved file to drafts directory`);
+        
+        // Обновляем путь
+        imageUrl = `${baseUrl}/uploads/drafts/${filename}`;
+      } catch (moveError) {
+        console.error('Error moving file to drafts directory:', moveError);
+        // Если не удалось переместить, используем оригинальный путь
+        imageUrl = `${baseUrl}/${path.relative(path.join(__dirname, '../..'), originalPath).replace(/\\/g, '/')}`;
+      }
     } else {
-      // Путь, который прислал multer
-      imageUrl = `${baseUrl}/${path.relative(path.join(__dirname, '../..'), originalPath).replace(/\\/g, '/')}`;
-      console.log('Using path from multer');
+      // Файл уже в директории черновиков
+      imageUrl = `${baseUrl}/uploads/drafts/${filename}`;
+      console.log('File saved in drafts directory');
     }
     
     // Обновляем использованное пространство пользователя
@@ -642,7 +662,6 @@ export const uploadDraftImage = async (req: Request, res: Response): Promise<voi
     const storageInfo = await storageService.getStorageInfo(userId);
     
     console.log('Generated image URL:', imageUrl);
-    console.log('Storage info:', storageInfo);
     
     res.status(200).json({
       success: true,

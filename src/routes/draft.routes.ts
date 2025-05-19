@@ -1,4 +1,4 @@
-import express, { Router } from 'express';
+import express, { Router, Request, Response, NextFunction } from 'express';
 import { 
   getDrafts, 
   getDraftById, 
@@ -9,7 +9,7 @@ import {
   getStorageInfo
 } from '../controllers/draft.controller';
 import { authMiddleware } from '../middlewares/auth.middleware';
-import { upload } from '../controllers/upload.controller';
+import { uploadDraft } from '../controllers/upload.controller';
 
 const router: Router = express.Router();
 
@@ -34,7 +34,7 @@ router.put('/:id', updateDraft);
 // Delete a draft
 router.delete('/:id', deleteDraft);
 
-// Upload an image for a draft
-router.post('/upload-image', upload.single('image'), uploadDraftImage);
+// Upload an image for a draft - используем uploadDraft для сохранения в правильную папку
+router.post('/upload-image', uploadDraft.single('image'), uploadDraftImage);
 
 export default router; 

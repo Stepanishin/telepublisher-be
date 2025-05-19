@@ -5,7 +5,7 @@ import User from '../models/user.model';
 import { publishToTelegram } from './telegram.service';
 import { TelegramService } from './telegram.service';
 import mongoose from 'mongoose';
-import { cleanupOldImages } from './cleanup.service';
+import { cleanupOldImages, cleanupDraftMetadata } from './cleanup.service';
 
 class SchedulerService {
   private running: boolean = false;
@@ -44,6 +44,11 @@ class SchedulerService {
 
     this.running = true;
     console.log('Scheduler started successfully');
+    
+    // Clean up draft metadata first to fix any inconsistencies
+    cleanupDraftMetadata()
+      .then(() => console.log('Draft metadata cleanup completed'))
+      .catch(err => console.error('Error during draft metadata cleanup:', err));
     
     // Run an initial cleanup on startup
     cleanupOldImages()

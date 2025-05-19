@@ -24,49 +24,62 @@ if (!fs.existsSync(metadataDir)) {
   fs.mkdirSync(metadataDir, { recursive: true });
 }
 
-// Настройка multer для обработки загруженных файлов
-const storage = multer.diskStorage({
+// Общие настройки multer для проверки типов файлов
+const fileFilter = (req: Request, file: Express.Multer.File, cb: FileFilterCallback) => {
+  // Проверка типа файла
+  const allowedMimeTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
+  if (allowedMimeTypes.includes(file.mimetype)) {
+    cb(null, true);
+  } else {
+    cb(new Error('Недопустимый формат файла. Допускаются только изображения (JPEG, PNG, GIF, WebP)'));
+  }
+};
+
+// Настройка multer для ОБЫЧНЫХ изображений (не черновиков)
+const regularStorage = multer.diskStorage({
   destination: (req: Request, file: Express.Multer.File, cb: Function) => {
-    // Проверяем URL запроса, чтобы определить, куда сохранять файл
-    console.log('Original URL:', req.originalUrl);
-    
-    if (req.originalUrl.includes('/api/drafts/upload-image')) {
-      // Сохраняем в uploads/drafts для маршрута черновиков
-      cb(null, draftsDir);
-    } else {
-      // Для остальных запросов сохраняем в общую папку uploads
-      const uploadDir = path.join(__dirname, '../../uploads');
-      
-      // Создаем директорию, если её нет
-      if (!fs.existsSync(uploadDir)) {
-        fs.mkdirSync(uploadDir, { recursive: true });
-      }
-      
-      cb(null, uploadDir);
-    }
+    console.log('Saving regular image to:', uploadsDir);
+    cb(null, uploadsDir);
   },
   filename: (req: Request, file: Express.Multer.File, cb: Function) => {
-    // Генерируем уникальное имя файла
     const uniqueName = `${uuidv4()}${path.extname(file.originalname)}`;
     cb(null, uniqueName);
   }
 });
 
-export const upload = multer({
-  storage,
+// Настройка multer для ЧЕРНОВИКОВ
+const draftsStorage = multer.diskStorage({
+  destination: (req: Request, file: Express.Multer.File, cb: Function) => {
+    console.log('Saving draft image to:', draftsDir);
+    cb(null, draftsDir);
+  },
+  filename: (req: Request, file: Express.Multer.File, cb: Function) => {
+    const uniqueName = `${uuidv4()}${path.extname(file.originalname)}`;
+    cb(null, uniqueName);
+  }
+});
+
+// Создаем два экземпляра multer с одинаковыми ограничениями, но разными местами хранения
+export const uploadRegular = multer({
+  storage: regularStorage,
   limits: {
     fileSize: 10 * 1024 * 1024, // Максимальный размер 10MB
   },
-  fileFilter: (req: Request, file: Express.Multer.File, cb: FileFilterCallback) => {
-    // Проверка типа файла
-    const allowedMimeTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
-    if (allowedMimeTypes.includes(file.mimetype)) {
-      cb(null, true);
-    } else {
-      cb(new Error('Недопустимый формат файла. Допускаются только изображения (JPEG, PNG, GIF, WebP)'));
-    }
-  }
+  fileFilter
 });
+
+export const uploadDraft = multer({
+  storage: draftsStorage,
+  limits: {
+    fileSize: 10 * 1024 * 1024, // Максимальный размер 10MB
+  },
+  fileFilter
+});
+
+// Экспортируем общий объект для обратной совместимости
+// Предупреждение! Этот метод загрузки не использовать для новых маршрутов!
+// В новых маршрутах используйте либо uploadRegular, либо uploadDraft
+export const upload = uploadRegular;
 
 /**
  * Creates a timestamp file for tracking regular upload images
@@ -81,6 +94,17 @@ const createTimestampFile = (filename: string): void => {
   } catch (error) {
     console.error(`Error creating timestamp file for ${filename}:`, error);
   }
+};
+
+/**
+ * Проверяет, находится ли файл в директории черновиков
+ * @param filePath Путь к файлу
+ * @returns Находится ли файл в директории черновиков
+ */
+const isInDraftsDirectory = (filePath: string): boolean => {
+  const normalizedPath = path.normalize(filePath);
+  const normalizedDraftsDir = path.normalize(draftsDir);
+  return normalizedPath.startsWith(normalizedDraftsDir);
 };
 
 // Используем локальное хранение файлов вместо внешнего сервиса
@@ -106,9 +130,18 @@ export const uploadImageToExternalService = async (req: Request, res: Response):
     const relativePath = path.relative(path.join(__dirname, '../..'), filePath).replace(/\\/g, '/');
     const imageUrl = `${baseUrl}/${relativePath}`;
 
-    // Create timestamp file for regular uploads (not drafts)
-    if (!req.originalUrl.includes('/api/drafts/upload-image')) {
+    // Определяем, является ли это файлом черновика по его фактическому расположению
+    const isDraftImage = isInDraftsDirectory(filePath);
+    
+    console.log(`File path: ${filePath}`);
+    console.log(`Is draft image: ${isDraftImage} (by directory check)`);
+    
+    // Create timestamp file ONLY for regular uploads (not drafts)
+    if (!isDraftImage) {
+      console.log(`Creating timestamp for regular upload: ${req.file.filename}`);
       createTimestampFile(req.file.filename);
+    } else {
+      console.log(`Skipping timestamp creation for draft image: ${req.file.filename}`);
     }
     
     // Возвращаем URL к загруженному изображению
