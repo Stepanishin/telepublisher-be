@@ -15,6 +15,12 @@ const SUBSCRIPTION_PRICE_IDS: Record<string, string> = {};
 // Using the same product for all subscription types for $1 pricing
 const PRODUCT_TO_SUBSCRIPTION_TYPE: Record<string, SubscriptionType> = {};
 
+// Define price amounts for subscription types in cents
+const SUBSCRIPTION_PRICES = {
+  [SubscriptionType.BASIC]: 1000, // $10.00
+  [SubscriptionType.BUSINESS]: 3000, // $30.00
+};
+
 export class StripeService {
   /**
    * Create a Stripe Checkout session for subscription
@@ -57,8 +63,9 @@ export class StripeService {
       productId = product.id;
       PRODUCT_TO_SUBSCRIPTION_TYPE[productId] = subscriptionType;
       
-      // Get or create price (always $1)
+      // Get or create price with appropriate amount based on subscription type
       let price;
+      const priceAmount = SUBSCRIPTION_PRICES[subscriptionType]; // Get correct price based on subscription type
       const prices = await stripe.prices.list({
         product: productId,
         active: true,
@@ -67,10 +74,21 @@ export class StripeService {
       
       if (prices.data.length > 0) {
         price = prices.data[0];
+        // Check if the price amount matches our desired amount, if not create a new price
+        if (price.unit_amount !== priceAmount) {
+          price = await stripe.prices.create({
+            product: productId,
+            unit_amount: priceAmount,
+            currency: 'usd',
+            recurring: {
+              interval: 'month',
+            },
+          });
+        }
       } else {
         price = await stripe.prices.create({
           product: productId,
-          unit_amount: 100, // $1.00
+          unit_amount: priceAmount,
           currency: 'usd',
           recurring: {
             interval: 'month',
