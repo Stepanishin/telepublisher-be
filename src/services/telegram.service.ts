@@ -269,6 +269,80 @@ const sendMessageWithPreview = async (
   return await response.json();
 };
 
+/**
+ * Publish to a Telegram channel using bot token and channel username
+ */
+export const publishToChannel = async (params: {
+  channelUsername: string;
+  botToken: string;
+  text: string;
+  imageUrl?: string;
+}): Promise<{ success: boolean; messageId?: string; error?: string }> => {
+  try {
+    // Prepare chatId
+    let chatId = params.channelUsername;
+    if (!chatId.startsWith('@') && !chatId.match(/^-?\d+$/)) {
+      chatId = '@' + chatId;
+    }
+    
+    let response: TelegramResponse;
+    
+    // If there's an image, handle potential caption length limit (1024 chars for Telegram)
+    if (params.imageUrl) {
+      const MAX_CAPTION_LENGTH = 1000; // Slightly less than the actual limit for safety
+      
+      if (params.text.length > MAX_CAPTION_LENGTH) {
+        // First send the image with a shortened caption
+        const caption = params.text.substring(0, MAX_CAPTION_LENGTH) + "...";
+        response = await sendPhoto(
+          params.botToken,
+          chatId,
+          caption,
+          params.imageUrl
+        );
+        
+        // Then send the full text as a separate message
+        await sendMessage(
+          params.botToken,
+          chatId,
+          params.text
+        );
+      } else {
+        // Text is short enough to fit in caption
+        response = await sendPhoto(
+          params.botToken,
+          chatId,
+          params.text,
+          params.imageUrl
+        );
+      }
+    } else {
+      // Otherwise just send a text message
+      response = await sendMessage(
+        params.botToken,
+        chatId,
+        params.text
+      );
+    }
+    
+    if (!response.ok) {
+      const errorMessage = response.description || 'Unknown Telegram API error';
+      throw new Error(errorMessage);
+    }
+    
+    return {
+      success: true,
+      messageId: response.result.message_id.toString()
+    };
+  } catch (error) {
+    console.error('Error publishing to Telegram channel:', error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Failed to publish to Telegram'
+    };
+  }
+};
+
 export class TelegramService {
   private token: string;
   private apiUrl: string;

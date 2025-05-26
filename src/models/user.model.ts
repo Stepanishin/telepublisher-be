@@ -26,6 +26,155 @@ const ChannelSchema = new Schema<IChannel>({
   }
 }, { _id: true });
 
+// AutoPosting Rule interface
+export enum Frequency {
+  DAILY = 'daily',
+  WEEKLY = 'weekly',
+  CUSTOM = 'custom'
+}
+
+export enum TimeUnit {
+  MINUTES = 'minutes',
+  HOURS = 'hours',
+  DAYS = 'days'
+}
+
+export interface IAutoPostingRule {
+  _id?: mongoose.Types.ObjectId;
+  name: string;
+  topic: string;
+  status: 'active' | 'inactive';
+  frequency: Frequency;
+  customInterval?: number;
+  customTimeUnit?: TimeUnit;
+  preferredTime?: string; // Format: "HH:MM"
+  preferredDays?: string[]; // Array of weekdays: ['monday', 'wednesday', etc.]
+  channelId: mongoose.Types.ObjectId | string;
+  imageGeneration: boolean;
+  keywords?: string[];
+  nextScheduled?: Date | null;
+  lastPublished?: Date | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+// AutoPosting history interface
+export interface IAutoPostingHistory {
+  _id?: mongoose.Types.ObjectId;
+  ruleId: mongoose.Types.ObjectId | string;
+  ruleName: string;
+  postId?: string;
+  content?: string;
+  imageUrl?: string;
+  status: 'success' | 'failed';
+  error?: string;
+  publishedAt: Date;
+}
+
+// AutoPosting Rule schema
+const AutoPostingRuleSchema = new Schema<IAutoPostingRule>(
+  {
+    name: {
+      type: String,
+      required: true,
+      trim: true,
+    },
+    topic: {
+      type: String,
+      required: true,
+      trim: true,
+    },
+    status: {
+      type: String,
+      enum: ['active', 'inactive'],
+      default: 'active',
+    },
+    frequency: {
+      type: String,
+      enum: Object.values(Frequency),
+      required: true,
+    },
+    customInterval: {
+      type: Number,
+      min: 1,
+    },
+    customTimeUnit: {
+      type: String,
+      enum: Object.values(TimeUnit),
+    },
+    preferredTime: {
+      type: String,
+      default: '12:00',
+    },
+    preferredDays: {
+      type: [String],
+      default: ['monday', 'wednesday', 'friday'],
+    },
+    channelId: {
+      type: Schema.Types.ObjectId,
+      required: true,
+    },
+    imageGeneration: {
+      type: Boolean,
+      default: true,
+    },
+    keywords: {
+      type: [String],
+      default: [],
+    },
+    nextScheduled: {
+      type: Date,
+      default: null,
+    },
+    lastPublished: {
+      type: Date,
+      default: null,
+    },
+  },
+  {
+    timestamps: true,
+    _id: true
+  }
+);
+
+// AutoPosting history schema
+const AutoPostingHistorySchema = new Schema<IAutoPostingHistory>(
+  {
+    ruleId: {
+      type: Schema.Types.ObjectId,
+      required: true,
+    },
+    ruleName: {
+      type: String,
+      required: true,
+    },
+    postId: {
+      type: String,
+    },
+    content: {
+      type: String,
+    },
+    imageUrl: {
+      type: String,
+    },
+    status: {
+      type: String,
+      enum: ['success', 'failed'],
+      required: true,
+    },
+    error: {
+      type: String,
+    },
+    publishedAt: {
+      type: Date,
+      default: Date.now,
+    },
+  },
+  {
+    _id: true
+  }
+);
+
 // Draft interface
 export interface IDraft {
   _id?: mongoose.Types.ObjectId;
@@ -140,6 +289,8 @@ export interface IUser extends Document {
   photoUrl?: string;
   channels: IChannel[];
   drafts?: IDraft[];
+  autoPostingRules?: IAutoPostingRule[];
+  autoPostingHistory?: IAutoPostingHistory[];
   subscription: ISubscription;
   aiCredits: number;
   totalCreditsUsed: number;
@@ -188,6 +339,14 @@ const UserSchema = new Schema<IUser>(
     },
     drafts: {
       type: [DraftSchema],
+      default: [],
+    },
+    autoPostingRules: {
+      type: [AutoPostingRuleSchema],
+      default: [],
+    },
+    autoPostingHistory: {
+      type: [AutoPostingHistorySchema],
       default: [],
     },
     subscription: {

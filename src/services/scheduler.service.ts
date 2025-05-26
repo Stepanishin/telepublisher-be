@@ -6,6 +6,7 @@ import { publishToTelegram } from './telegram.service';
 import { TelegramService } from './telegram.service';
 import mongoose from 'mongoose';
 import { cleanupOldImages, cleanupDraftMetadata } from './cleanup.service';
+import autoPostingService from './autoposting.service';
 
 // Set для хранения ID постов, которые сейчас обрабатываются
 // чтобы избежать дублирования обработки одного и того же поста
@@ -14,6 +15,7 @@ const processingPosts = new Set<string>();
 class SchedulerService {
   private running: boolean = false;
   private postsPollsJob: cron.ScheduledTask | null = null;
+  private autoPostingJob: cron.ScheduledTask | null = null;
   private cleanupJob: cron.ScheduledTask | null = null;
 
   /**
@@ -32,6 +34,19 @@ class SchedulerService {
         await this.processScheduledPolls();
       } catch (error) {
         console.error('Error in scheduler service:', error);
+      }
+    });
+    
+    // Schedule AutoPosting task to run every 5 minutes
+    this.autoPostingJob = cron.schedule('*/5 * * * *', async () => {
+      try {
+        console.log('[SCHEDULER] Checking for autoposting rules to execute...');
+        const processedCount = await autoPostingService.processDueRules();
+        if (processedCount > 0) {
+          console.log(`[SCHEDULER] Successfully processed ${processedCount} autoposting rules`);
+        }
+      } catch (error) {
+        console.error('[SCHEDULER] Error in autoposting scheduler:', error);
       }
     });
 
@@ -58,6 +73,15 @@ class SchedulerService {
     cleanupOldImages()
       .then(() => console.log('Initial image cleanup completed'))
       .catch(err => console.error('Error during initial image cleanup:', err));
+    
+    // Run an initial check for autoposting rules
+    autoPostingService.processDueRules()
+      .then(count => {
+        if (count > 0) {
+          console.log(`Initial autoposting check: processed ${count} rules`);
+        }
+      })
+      .catch(err => console.error('Error during initial autoposting check:', err));
   }
 
   /**
@@ -67,6 +91,11 @@ class SchedulerService {
     if (this.postsPollsJob) {
       this.postsPollsJob.stop();
       this.postsPollsJob = null;
+    }
+    
+    if (this.autoPostingJob) {
+      this.autoPostingJob.stop();
+      this.autoPostingJob = null;
     }
     
     if (this.cleanupJob) {
