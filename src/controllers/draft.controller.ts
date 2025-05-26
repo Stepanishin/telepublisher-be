@@ -89,7 +89,7 @@ export const createDraft = async (req: Request, res: Response): Promise<void> =>
       return;
     }
     
-    const { title, content, imageUrl, imageUrls, tags } = req.body;
+    const { title, content, imageUrl, imageUrls, tags, imagePosition, buttons } = req.body;
     
     if (!title || !content) {
       res.status(400).json({
@@ -119,7 +119,9 @@ export const createDraft = async (req: Request, res: Response): Promise<void> =>
       content,
       imageUrl,
       imageUrls: Array.isArray(imageUrls) ? imageUrls : [],
-      tags: Array.isArray(tags) ? tags : []
+      tags: Array.isArray(tags) ? tags : [],
+      imagePosition: imagePosition || 'top',
+      buttons: Array.isArray(buttons) ? buttons : []
     };
     
     // Add draft to user's drafts array
@@ -215,9 +217,9 @@ export const updateDraft = async (req: Request, res: Response): Promise<void> =>
     }
     
     const draftId = req.params.id;
-    const { title, content, imageUrl, imageUrls, tags } = req.body;
+    const { title, content, imageUrl, imageUrls, tags, imagePosition, buttons } = req.body;
     
-    if (!title && !content && !imageUrl && !imageUrls && !tags) {
+    if (!title && !content && !imageUrl && !imageUrls && !tags && !imagePosition && !buttons) {
       res.status(400).json({
         success: false,
         message: 'At least one field to update is required'
@@ -339,6 +341,8 @@ export const updateDraft = async (req: Request, res: Response): Promise<void> =>
     if (imageUrl !== undefined) draft.imageUrl = imageUrl;
     if (imageUrls !== undefined) draft.imageUrls = Array.isArray(imageUrls) ? imageUrls : [];
     if (tags !== undefined) draft.tags = Array.isArray(tags) ? tags : [];
+    if (imagePosition !== undefined) draft.imagePosition = imagePosition;
+    if (buttons !== undefined) draft.buttons = Array.isArray(buttons) ? buttons : [];
     
     await user.save();
     

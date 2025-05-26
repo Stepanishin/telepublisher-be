@@ -34,6 +34,8 @@ export interface IDraft {
   imageUrl?: string;
   imageUrls?: string[];
   tags?: string[];
+  imagePosition?: string; // 'top' | 'bottom'
+  buttons?: { text: string; url: string }[];
   createdAt: Date;
   updatedAt: Date;
 }
@@ -60,6 +62,18 @@ const DraftSchema = new Schema<IDraft>(
     },
     tags: {
       type: [String],
+      default: [],
+    },
+    imagePosition: {
+      type: String,
+      enum: ['top', 'bottom'],
+      default: 'top',
+    },
+    buttons: {
+      type: [{
+        text: String,
+        url: String
+      }],
       default: [],
     },
   },
