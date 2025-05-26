@@ -61,10 +61,16 @@ export const publishToTelegram = async (
   text: string, 
   imageUrl?: string,
   imageUrls?: string[], 
-  tags?: string[]
+  tags?: string[],
+  imagePosition: 'top' | 'bottom' = 'top',
+  buttons?: { text: string; url: string }[]
 ): Promise<{ success: boolean; message: string }> => {
   try {
-    console.log(`Publishing to Telegram - channelId: ${channelId}, has image: ${!!imageUrl}, image count: ${imageUrls?.length || 0}`);
+    const startTime = Date.now();
+    console.log(`[TELEGRAM SERVICE] Publishing to Telegram - channelId: ${channelId}, has image: ${!!imageUrl}, image count: ${imageUrls?.length || 0}, imagePosition: ${imagePosition}, buttons: ${buttons?.length || 0}`);
+    console.log(`[TELEGRAM SERVICE] Text length: ${text.length}, Text: ${text.substring(0, 50)}...`);
+    console.log(`[TELEGRAM SERVICE] Images: ${imageUrl || 'none'}, ${imageUrls && imageUrls.length > 0 ? JSON.stringify(imageUrls) : 'none'}`);
+    console.log(`[TELEGRAM SERVICE] Position: ${imagePosition}, Buttons: ${buttons ? JSON.stringify(buttons) : 'none'}`);
     
     // Prepare the chatId, adding @ if necessary
     let chatId = channelId;
@@ -78,36 +84,76 @@ export const publishToTelegram = async (
       messageText += '\n\n' + tags.join(' ');
     }
     
+    // Prepare inline keyboard if buttons are provided
+    const replyMarkup = buttons && buttons.length > 0 
+      ? {
+          inline_keyboard: buttons.map(button => [{
+            text: button.text,
+            url: button.url
+          }])
+        }
+      : undefined;
+    
     let response: TelegramResponse;
     
     // Check if we have multiple images
     if (imageUrls && imageUrls.length > 0) {
-      console.log(`Sending ${imageUrls.length} images as a media group`);
-      response = await sendMediaGroup(botToken, chatId, messageText, imageUrls);
+      console.log(`[TELEGRAM SERVICE] Sending ${imageUrls.length} images as a media group`);
+      
+      // Для позиции 'bottom', отправляем текстовое сообщение с предпросмотром первого изображения
+      if (imagePosition === 'bottom' && messageText.trim()) {
+        console.log(`[TELEGRAM SERVICE] Using bottom position with message preview for multiple images`);
+        // Берем первое изображение для предпросмотра
+        const previewImageUrl = imageUrls[0];
+        
+        // Отправляем текстовое сообщение с предпросмотром изображения внизу
+        response = await sendMessageWithPreview(botToken, chatId, messageText, previewImageUrl, replyMarkup);
+      } else {
+        console.log(`[TELEGRAM SERVICE] Using standard media group sending for multiple images`);
+        // Отправляем группу изображений с стандартным способом
+        response = await sendMediaGroup(botToken, chatId, messageText, imageUrls);
+        
+        // Если есть кнопки, отправляем их отдельным сообщением
+        if (replyMarkup) {
+          console.log(`[TELEGRAM SERVICE] Sending buttons separately for media group`);
+          await sendMessage(botToken, chatId, '🔗 Links:', replyMarkup);
+        }
+      }
     }
-    // If there's a single image, send a photo with caption
+    // If there's a single image
     else if (imageUrl) {
-      console.log(`Sending a single image with the photo endpoint`);
-      response = await sendPhoto(botToken, chatId, messageText, imageUrl);
+      console.log(`[TELEGRAM SERVICE] Sending a single image with position: ${imagePosition}`);
+      
+      // For bottom image position, send a message with image preview at bottom
+      if (imagePosition === 'bottom' && messageText.trim()) {
+        console.log(`[TELEGRAM SERVICE] Using bottom position with message preview for single image`);
+        // Create message with image link preview
+        response = await sendMessageWithPreview(botToken, chatId, messageText, imageUrl, replyMarkup);
+      } else {
+        console.log(`[TELEGRAM SERVICE] Using standard photo with caption for single image`);
+        // Regular behavior - image with caption
+        response = await sendPhoto(botToken, chatId, messageText, imageUrl, replyMarkup);
+      }
     } else {
       // Otherwise send just a text message
-      console.log(`Sending a text-only message`);
-      response = await sendMessage(botToken, chatId, messageText);
+      console.log(`[TELEGRAM SERVICE] Sending a text-only message`);
+      response = await sendMessage(botToken, chatId, messageText, replyMarkup);
     }
     
     if (!response.ok) {
       const errorMessage = response.description || 'Unknown Telegram API error';
-      console.error(`Telegram API error: ${errorMessage} (Code: ${response.error_code})`);
+      console.error(`[TELEGRAM SERVICE] Telegram API error: ${errorMessage} (Code: ${response.error_code})`);
       throw new Error(errorMessage);
     }
     
-    console.log(`Successfully published to Telegram channel: ${chatId}`);
+    console.log(`[TELEGRAM SERVICE] Successfully published to Telegram channel: ${chatId}`);
+    console.log(`[TELEGRAM SERVICE] Total publication time: ${Date.now() - startTime}ms`);
     return {
       success: true,
       message: 'Successfully published to Telegram'
     };
   } catch (error) {
-    console.error('Error publishing to Telegram:', error);
+    console.error('[TELEGRAM SERVICE] Error publishing to Telegram:', error);
     const errorMessage = error instanceof Error ? error.message : 'Failed to publish to Telegram';
     return {
       success: false,
@@ -122,40 +168,46 @@ export const publishToTelegram = async (
 const sendMessage = async (
   botToken: string, 
   chatId: string, 
-  text: string
+  text: string,
+  replyMarkup?: any
 ): Promise<TelegramResponse> => {
-  const response = await axios.post<TelegramResponse>(
-    `https://api.telegram.org/bot${botToken}/sendMessage`, 
-    {
+  const response = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
       chat_id: chatId,
       text,
-      parse_mode: 'HTML'
-    }
-  );
+      parse_mode: 'HTML',
+      reply_markup: replyMarkup
+    })
+  });
   
-  return response.data;
+  return await response.json();
 };
 
 /**
  * Send a photo with caption to a Telegram chat
  */
 const sendPhoto = async (
-  botToken: string, 
-  chatId: string, 
-  caption: string, 
-  photoUrl: string
+  botToken: string,
+  chatId: string,
+  caption: string,
+  photoUrl: string,
+  replyMarkup?: any
 ): Promise<TelegramResponse> => {
-  const response = await axios.post<TelegramResponse>(
-    `https://api.telegram.org/bot${botToken}/sendPhoto`, 
-    {
+  const response = await fetch(`https://api.telegram.org/bot${botToken}/sendPhoto`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
       chat_id: chatId,
       photo: photoUrl,
       caption,
-      parse_mode: 'HTML'
-    }
-  );
-  
-  return response.data;
+      parse_mode: 'HTML',
+      reply_markup: replyMarkup
+    })
+  });
+
+  return await response.json();
 };
 
 /**
@@ -187,6 +239,34 @@ const sendMediaGroup = async (
   );
 
   return response.data;
+};
+
+// Вспомогательная функция для отправки сообщения с превью изображения внизу
+const sendMessageWithPreview = async (
+  botToken: string,
+  chatId: string,
+  text: string,
+  imageUrl: string,
+  replyMarkup?: any
+): Promise<TelegramResponse> => {
+  const response = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      chat_id: chatId,
+      text: text,
+      parse_mode: 'HTML',
+      link_preview_options: {
+        is_disabled: false,
+        url: imageUrl,
+        prefer_large_media: true,
+        show_above_text: false
+      },
+      reply_markup: replyMarkup
+    })
+  });
+  
+  return await response.json();
 };
 
 export class TelegramService {

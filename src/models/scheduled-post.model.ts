@@ -9,6 +9,8 @@ export interface IScheduledPost extends Document {
   tags: string[];
   scheduledDate: Date;
   published: boolean;
+  imagePosition?: 'top' | 'bottom';
+  buttons?: { text: string; url: string }[];
   createdAt: Date;
   updatedAt: Date;
 }
@@ -47,6 +49,18 @@ const ScheduledPostSchema = new Schema<IScheduledPost>(
     published: {
       type: Boolean,
       default: false,
+    },
+    imagePosition: {
+      type: String,
+      enum: ['top', 'bottom'],
+      default: 'top',
+    },
+    buttons: {
+      type: [{
+        text: String,
+        url: String
+      }],
+      default: [],
     },
   },
   {

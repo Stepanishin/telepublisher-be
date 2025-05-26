@@ -7,6 +7,10 @@ import { TelegramService } from './telegram.service';
 import mongoose from 'mongoose';
 import { cleanupOldImages, cleanupDraftMetadata } from './cleanup.service';
 
+// Set для хранения ID постов, которые сейчас обрабатываются
+// чтобы избежать дублирования обработки одного и того же поста
+const processingPosts = new Set<string>();
+
 class SchedulerService {
   private running: boolean = false;
   private postsPollsJob: cron.ScheduledTask | null = null;
@@ -92,65 +96,104 @@ class SchedulerService {
         return;
       }
 
-      console.log(`Found ${duePosts.length} scheduled posts to publish`);
+      console.log(`[SCHEDULER] Found ${duePosts.length} scheduled posts to publish`);
+      console.log(`[SCHEDULER] Current processing posts: ${Array.from(processingPosts).join(', ')}`);
 
       // Process each post
       for (const post of duePosts) {
         try {
-          console.log(`Processing post ID: ${post._id}, scheduled for: ${post.scheduledDate}`);
+          const postId = (post._id as mongoose.Types.ObjectId).toString();
           
-          // First we need to find the user who owns the channel
-          const user = await User.findOne({
-            _id: post.user
-          });
-          
-          if (!user) {
-            console.error(`User not found for scheduled post ${post._id}`);
+          // Сначала еще раз проверим в базе данных - возможно пост уже был удален
+          // другим процессом (например, ручной публикацией)
+          const postStillExists = await ScheduledPost.findById(postId);
+          if (!postStillExists) {
+            console.log(`[SCHEDULER] Post ${postId} no longer exists in the database, skipping`);
             continue;
           }
-
-          // Find the channel in the user's channels array
-          const channel = user.channels.find(c => {
-            if (!c._id) return false;
-            return c._id.toString() === post.channelId.toString();
-          });
-
-          if (!channel || !channel.botToken) {
-            console.error(`Channel not found or missing bot token for post ${post._id}`);
+          
+          // Проверяем, не обрабатывается ли этот пост уже
+          const isProcessing = processingPosts.has(postId);
+          console.log(`[SCHEDULER] Post ${postId} is already being processed: ${isProcessing}`);
+          
+          if (isProcessing) {
+            console.log(`[SCHEDULER] Post ${postId} is already being processed, skipping`);
             continue;
           }
-
-          console.log(`Publishing to channel: ${channel.title || channel.username}`);
           
-          // Check if we have multiple images
-          if (post.imageUrls && post.imageUrls.length > 0) {
-            console.log(`Post has ${post.imageUrls.length} images in imageUrls array`);
-          } else if (post.imageUrl) {
-            console.log(`Post has a single image: ${post.imageUrl}`);
-          } else {
-            console.log(`Post is text-only`);
+          // Добавляем пост в список обрабатываемых
+          processingPosts.add(postId);
+          console.log(`[SCHEDULER] Added post ${postId} to processing set. Current size: ${processingPosts.size}`);
+          
+          try {
+            console.log(`[SCHEDULER] Processing post ID: ${postId}, scheduled for: ${post.scheduledDate}`);
+            console.log(`[SCHEDULER] Post details: ${JSON.stringify({
+              channelId: post.channelId,
+              textLength: post.text.length,
+              hasImage: !!post.imageUrl,
+              imageCount: post.imageUrls?.length || 0,
+              imagePosition: post.imagePosition || 'top',
+              buttonCount: post.buttons?.length || 0
+            })}`);
+            
+            // First we need to find the user who owns the channel
+            const user = await User.findOne({
+              _id: post.user
+            });
+            
+            if (!user) {
+              console.error(`[SCHEDULER] User not found for scheduled post ${postId}`);
+              continue;
+            }
+
+            // Find the channel in the user's channels array
+            const channel = user.channels.find(c => {
+              if (!c._id) return false;
+              return c._id.toString() === post.channelId.toString();
+            });
+
+            if (!channel || !channel.botToken) {
+              console.error(`[SCHEDULER] Channel not found or missing bot token for post ${postId}`);
+              continue;
+            }
+
+            console.log(`[SCHEDULER] Publishing to channel: ${channel.title || channel.username}`);
+            
+            // Check if we have multiple images
+            if (post.imageUrls && post.imageUrls.length > 0) {
+              console.log(`[SCHEDULER] Post has ${post.imageUrls.length} images in imageUrls array`);
+            } else if (post.imageUrl) {
+              console.log(`[SCHEDULER] Post has a single image: ${post.imageUrl}`);
+            } else {
+              console.log(`[SCHEDULER] Post is text-only`);
+            }
+
+            // Publish to Telegram
+            const result = await publishToTelegram(
+              channel.username, 
+              channel.botToken, 
+              post.text, 
+              post.imageUrl,
+              post.imageUrls,
+              post.tags,
+              post.imagePosition || 'top',
+              post.buttons || []
+            );
+            
+            // Delete the post instead of marking as published
+            await ScheduledPost.findByIdAndDelete(post._id);
+
+            console.log(`[SCHEDULER] Published and deleted scheduled post ${postId} - ${result.success ? 'Success' : 'Failed: ' + result.message}`);
+          } finally {
+            // Удаляем пост из списка обрабатываемых в любом случае
+            processingPosts.delete(postId);
           }
-
-          // Publish to Telegram
-          const result = await publishToTelegram(
-            channel.username, 
-            channel.botToken, 
-            post.text, 
-            post.imageUrl,
-            post.imageUrls,
-            post.tags
-          );
-          
-          // Delete the post instead of marking as published
-          await ScheduledPost.findByIdAndDelete(post._id);
-
-          console.log(`Published and deleted scheduled post ${post._id} - ${result.success ? 'Success' : 'Failed: ' + result.message}`);
         } catch (postError) {
-          console.error(`Error processing scheduled post ${post._id}:`, postError);
+          console.error(`[SCHEDULER] Error processing scheduled post:`, postError);
         }
       }
     } catch (error) {
-      console.error('Error in scheduler service:', error);
+      console.error('[SCHEDULER] Error in scheduler service:', error);
     }
   }
 

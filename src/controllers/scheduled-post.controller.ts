@@ -3,12 +3,16 @@ import ScheduledPost from '../models/scheduled-post.model';
 import { publishToTelegram } from '../services/telegram.service';
 import User from '../models/user.model';
 
+// Set для хранения ID постов, которые сейчас обрабатываются
+// чтобы избежать дублирования обработки одного и того же поста
+const publishingPosts = new Set<string>();
+
 /**
  * Create a new scheduled post
  */
 export const createScheduledPost = async (req: Request, res: Response) => {
   try {
-    const { channelId, text, imageUrl, imageUrls, tags, scheduledDate } = req.body;
+    const { channelId, text, imageUrl, imageUrls, tags, scheduledDate, imagePosition, buttons } = req.body;
     const userId = req.user?._id;
 
     if (!channelId || !text || !scheduledDate) {
@@ -78,6 +82,8 @@ export const createScheduledPost = async (req: Request, res: Response) => {
       imageUrls: Array.isArray(imageUrls) ? imageUrls : [],
       tags,
       scheduledDate: scheduledDateObj,
+      imagePosition: imagePosition || 'top',
+      buttons: Array.isArray(buttons) ? buttons : [],
       published: false,
       user: userId,
     });
@@ -166,7 +172,7 @@ export const deleteScheduledPost = async (req: Request, res: Response) => {
 export const updateScheduledPost = async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
-    const { text, imageUrl, imageUrls, tags, scheduledDate } = req.body;
+    const { text, imageUrl, imageUrls, tags, scheduledDate, imagePosition, buttons } = req.body;
     const userId = req.user?._id;
 
     // Validate scheduledDate is in the future if provided
@@ -188,10 +194,12 @@ export const updateScheduledPost = async (req: Request, res: Response) => {
       },
       {
         ...(text && { text }),
-        ...(imageUrl && { imageUrl }),
+        ...(imageUrl !== undefined && { imageUrl }),
         ...(imageUrls && { imageUrls: Array.isArray(imageUrls) ? imageUrls : [] }),
         ...(tags && { tags }),
         ...(scheduledDate && { scheduledDate: new Date(scheduledDate) }),
+        ...(imagePosition && { imagePosition }),
+        ...(buttons && { buttons: Array.isArray(buttons) ? buttons : [] }),
       },
       { new: true }
     );
@@ -227,6 +235,9 @@ export const publishScheduledPost = async (req: Request, res: Response) => {
     const { id } = req.params;
     const userId = req.user?._id;
 
+    console.log(`[CONTROLLER] Publishing scheduled post: ${id} for user ${userId}`);
+    console.log(`[CONTROLLER] Current processing posts: ${Array.from(publishingPosts).join(', ')}`);
+
     // Find the post
     const scheduledPost = await ScheduledPost.findOne({
       _id: id,
@@ -235,60 +246,106 @@ export const publishScheduledPost = async (req: Request, res: Response) => {
     });
 
     if (!scheduledPost) {
+      console.log(`[CONTROLLER] Scheduled post not found or already published: ${id}`);
       return res.status(404).json({
         success: false,
         message: 'Scheduled post not found or already published',
       });
     }
 
-    // Find the user
-    const user = await User.findById(userId);
-    if (!user) {
-      return res.status(404).json({
-        success: false,
-        message: 'User not found',
+    console.log(`[CONTROLLER] Found scheduled post: ${JSON.stringify({
+      id: scheduledPost._id,
+      channelId: scheduledPost.channelId,
+      text: scheduledPost.text.substring(0, 50) + '...',
+      hasImage: !!scheduledPost.imageUrl,
+      imageCount: scheduledPost.imageUrls?.length || 0,
+      imagePosition: scheduledPost.imagePosition || 'top',
+      buttonCount: scheduledPost.buttons?.length || 0
+    })}`);
+
+    // Убедимся, что мы не обрабатываем один и тот же запланированный пост несколько раз
+    const alreadyProcessing = publishingPosts.has(id);
+    console.log(`[CONTROLLER] Post ${id} is already being processed: ${alreadyProcessing}`);
+    
+    if (alreadyProcessing) {
+      console.log(`[CONTROLLER] Post ${id} is already being processed, skipping duplicate request`);
+      return res.status(200).json({
+        success: true,
+        message: 'Post is already being processed',
       });
     }
 
-    // Find the channel
-    const channel = user.channels.find(c => {
-      if (!c._id) return false;
-      return c._id.toString() === scheduledPost.channelId.toString();
-    });
+    // Добавляем ID поста в список обрабатываемых
+    publishingPosts.add(id);
 
-    if (!channel || !channel.botToken) {
-      return res.status(404).json({
-        success: false,
-        message: 'Channel not found or missing bot token',
+    try {
+      // Find the user
+      const user = await User.findById(userId);
+      if (!user) {
+        console.log(`[CONTROLLER] User not found: ${userId}`);
+        return res.status(404).json({
+          success: false,
+          message: 'User not found',
+        });
+      }
+
+      // Find the channel
+      const channel = user.channels.find(c => {
+        if (!c._id) return false;
+        return c._id.toString() === scheduledPost.channelId.toString();
       });
-    }
 
-    // Publish to Telegram
-    const result = await publishToTelegram(
-      channel.username,
-      channel.botToken,
-      scheduledPost.text,
-      scheduledPost.imageUrl,
-      scheduledPost.imageUrls,
-      scheduledPost.tags
-    );
+      if (!channel || !channel.botToken) {
+        console.log(`[CONTROLLER] Channel not found or missing bot token for scheduled post: ${id}`);
+        return res.status(404).json({
+          success: false,
+          message: 'Channel not found or missing bot token',
+        });
+      }
 
-    if (!result.success) {
-      return res.status(500).json({
-        success: false,
-        message: `Failed to publish: ${result.message}`,
+      console.log(`[CONTROLLER] Found channel: ${channel.username}`);
+
+      // Get imagePosition and buttons from the post
+      const imagePosition = scheduledPost.imagePosition || 'top';
+      const buttons = scheduledPost.buttons || [];
+
+      console.log(`[CONTROLLER] Ready to publish with params: imagePosition=${imagePosition}, buttons=${JSON.stringify(buttons)}`);
+
+      // Publish to Telegram
+      const result = await publishToTelegram(
+        channel.username,
+        channel.botToken,
+        scheduledPost.text,
+        scheduledPost.imageUrl,
+        scheduledPost.imageUrls,
+        scheduledPost.tags,
+        imagePosition,
+        buttons
+      );
+
+      console.log(`[CONTROLLER] Publish result: ${JSON.stringify(result)}`);
+
+      if (!result.success) {
+        return res.status(500).json({
+          success: false,
+          message: `Failed to publish: ${result.message}`,
+        });
+      }
+
+      // Delete the post instead of marking as published
+      await ScheduledPost.findByIdAndDelete(scheduledPost._id);
+      console.log(`[CONTROLLER] Deleted scheduled post after successful publishing: ${id}`);
+
+      return res.status(200).json({
+        success: true,
+        message: 'Post published and deleted successfully',
       });
+    } finally {
+      // Удаляем ID из списка обрабатываемых в любом случае
+      publishingPosts.delete(id);
     }
-
-    // Delete the post instead of marking as published
-    await ScheduledPost.findByIdAndDelete(scheduledPost._id);
-
-    return res.status(200).json({
-      success: true,
-      message: 'Post published and deleted successfully',
-    });
   } catch (error) {
-    console.error('Error publishing scheduled post:', error);
+    console.error('[CONTROLLER] Error publishing scheduled post:', error);
     return res.status(500).json({
       success: false,
       message: 'Failed to publish post',
