@@ -4,6 +4,7 @@ import User, { IAutoPostingRule, Frequency, TimeUnit } from '../models/user.mode
 import { generateText, generateImage } from '../services/openai.service';
 import { publishToChannel } from '../services/telegram.service';
 import { calculateNextScheduledDate } from '../utils/dateUtils';
+import webScraperService from '../services/webScraper.service';
 import logger from '../utils/logger';
 
 /**
@@ -122,7 +123,8 @@ export const createAutoPostingRule = async (req: Request, res: Response): Promis
       channelId,
       imageGeneration,
       keywords,
-      buttons
+      buttons,
+      sourceUrls
     } = req.body;
 
     // Validate required fields
@@ -176,6 +178,21 @@ export const createAutoPostingRule = async (req: Request, res: Response): Promis
       return;
     }
 
+    // Validate sourceUrls if provided
+    if (sourceUrls && Array.isArray(sourceUrls)) {
+      for (const url of sourceUrls) {
+        try {
+          new URL(url);
+        } catch {
+          res.status(400).json({
+            success: false,
+            message: `Invalid URL: ${url}`
+          });
+          return;
+        }
+      }
+    }
+
     // Create new rule
     const newRule: IAutoPostingRule = {
       name,
@@ -190,6 +207,7 @@ export const createAutoPostingRule = async (req: Request, res: Response): Promis
       imageGeneration: imageGeneration !== undefined ? imageGeneration : false,
       keywords: keywords || [],
       buttons: buttons || [],
+      sourceUrls: sourceUrls || [],
       nextScheduled: calculateNextScheduledDate({
         frequency,
         customInterval,
@@ -284,7 +302,8 @@ export const updateAutoPostingRule = async (req: Request, res: Response): Promis
       channelId,
       imageGeneration,
       keywords,
-      buttons
+      buttons,
+      sourceUrls
     } = req.body;
 
     // Update fields if provided
@@ -340,6 +359,27 @@ export const updateAutoPostingRule = async (req: Request, res: Response): Promis
     if (imageGeneration !== undefined) rule.imageGeneration = imageGeneration;
     if (keywords) rule.keywords = keywords;
     if (buttons !== undefined) rule.buttons = buttons;
+    
+    // Handle sourceUrls
+    if (sourceUrls !== undefined) {
+      // Validate sourceUrls if provided
+      if (Array.isArray(sourceUrls)) {
+        for (const url of sourceUrls) {
+          try {
+            new URL(url);
+          } catch {
+            res.status(400).json({
+              success: false,
+              message: `Invalid URL: ${url}`
+            });
+            return;
+          }
+        }
+        rule.sourceUrls = sourceUrls;
+      } else {
+        rule.sourceUrls = [];
+      }
+    }
     
     // Recalculate next scheduled date if needed
     if (shouldRecalculateNextScheduled) {
@@ -570,19 +610,106 @@ export const executeAutoPostingRule = async (req: Request, res: Response): Promi
       ? ` Include these keywords if possible: ${rule.keywords.join(', ')}.`
       : '';
     
-    // Array of different prompt templates for text generation
-    const promptTemplates = [
-      `Create a concise post about ${topic} for a Telegram channel. Make it engaging and informative.${keywordsText} The post should be formatted for Telegram and be between 100-200 words maximum.`,
-      `Write a creative Telegram post about ${topic} with a unique angle or perspective.${keywordsText} Keep it under 200 words and make it stand out from typical content on this topic.`,
-      `Compose an engaging Telegram channel update on ${topic}.${keywordsText} Be conversational and direct. Keep it concise (under 200 words) while still being informative.`,
-      `Draft a captivating Telegram post discussing recent developments in ${topic}.${keywordsText} Use an attention-grabbing opening and maintain reader interest throughout. Limit to 200 words.`,
-      `Create insider content about ${topic} for a Telegram audience.${keywordsText} Share valuable insights in a compelling way. Keep it concise (100-200 words) and easy to read on mobile devices.`
-    ];
+    let contextText = '';
+    let hasScrapedContent = false;
     
-    // Randomly select a prompt template
-    const randomPrompt = promptTemplates[Math.floor(Math.random() * promptTemplates.length)];
+    // If source URLs are provided, scrape content from them
+    if (rule.sourceUrls && rule.sourceUrls.length > 0) {
+      try {
+        logger.info(`AutoPostingController: Scraping content from ${rule.sourceUrls.length} URLs for rule ${rule._id}`);
+        
+        const scrapedContents = await webScraperService.scrapeUrls(rule.sourceUrls);
+        
+        if (scrapedContents.length > 0) {
+          hasScrapedContent = true;
+          
+          // Create detailed context from scraped content
+          contextText = '\n\n--- IMPORTANT: Use the following RECENT INFORMATION as the PRIMARY BASIS for the post ---\n';
+          
+          scrapedContents.forEach((content, index) => {
+            contextText += `\nArticle ${index + 1}:\n`;
+            contextText += `Title: ${content.title}\n`;
+            
+            if (content.description) {
+              contextText += `Description: ${content.description}\n`;
+            }
+            
+            if (content.content && content.content.length > 0) {
+              // Include more content for better context
+              const contentPreview = content.content.length > 500 
+                ? content.content.substring(0, 500) + '...'
+                : content.content;
+              contextText += `Content: ${contentPreview}\n`;
+            }
+            
+            if (content.author) {
+              contextText += `Author: ${content.author}\n`;
+            }
+            
+            if (content.publishDate) {
+              contextText += `Published: ${content.publishDate.toLocaleDateString()}\n`;
+            }
+            
+            contextText += `Source: ${content.url}\n`;
+            contextText += '---\n';
+          });
+          
+          contextText += '\nIMPORTANT INSTRUCTIONS:\n';
+          contextText += '- Base your post primarily on the information above\n';
+          contextText += '- Synthesize insights from all articles\n';
+          contextText += '- Include specific details, facts, or quotes from the sources\n';
+          contextText += '- Reference the most interesting or newsworthy points\n';
+          contextText += '- Make the post feel fresh and current\n';
+          
+          logger.info(`AutoPostingController: Successfully scraped ${scrapedContents.length} articles for rule ${rule._id}`);
+        } else {
+          logger.warn(`AutoPostingController: No content could be scraped from provided URLs for rule ${rule._id}`);
+        }
+      } catch (error) {
+        logger.error(`AutoPostingController: Error scraping content for rule ${rule._id}`, {
+          error: error instanceof Error ? error.message : 'Unknown error'
+        });
+        // Continue without scraped content
+      }
+    }
     
-    const generatedText = await generateText(randomPrompt);
+    // Create different prompts based on whether we have scraped content
+    let prompt: string;
+    
+    if (hasScrapedContent) {
+      // When we have scraped content, prioritize it over random templates
+      prompt = `You are creating a Telegram post about "${topic}" based on recent information from reliable sources.${contextText}
+
+Create an engaging, informative Telegram post that:
+1. PRIORITIZES the information from the sources above
+2. Presents the key insights in an engaging way
+3. Uses a conversational tone suitable for Telegram
+4. Is between 150-300 words
+5. Includes relevant emojis where appropriate${keywordsText}
+
+Focus on making the content feel current, newsworthy, and valuable to readers.`;
+    } else {
+      // Use random templates only when no scraped content is available
+      const promptTemplates = [
+        `Create a concise post about ${topic} for a Telegram channel. Make it engaging and informative.${keywordsText} The post should be formatted for Telegram and be between 100-200 words maximum.`,
+        `Write a creative Telegram post about ${topic} with a unique angle or perspective.${keywordsText} Keep it under 200 words and make it stand out from typical content on this topic.`,
+        `Compose an engaging Telegram channel update on ${topic}.${keywordsText} Be conversational and direct. Keep it concise (under 200 words) while still being informative.`,
+        `Draft a captivating Telegram post discussing recent developments in ${topic}.${keywordsText} Use an attention-grabbing opening and maintain reader interest throughout. Limit to 200 words.`,
+        `Create insider content about ${topic} for a Telegram audience.${keywordsText} Share valuable insights in a compelling way. Keep it concise (100-200 words) and easy to read on mobile devices.`
+      ];
+      
+      // Randomly select a prompt template
+      prompt = promptTemplates[Math.floor(Math.random() * promptTemplates.length)];
+    }
+    
+    // Log the final prompt for debugging
+    logger.info(`AutoPostingController: Final prompt for rule ${rule._id}:`, {
+      hasScrapedContent,
+      promptLength: prompt.length,
+      prompt: prompt.substring(0, 500) + (prompt.length > 500 ? '...' : '')
+    });
+    
+    const generatedText = await generateText(prompt);
     let generatedImageUrl: string | null = null;
     
     if (rule.imageGeneration) {

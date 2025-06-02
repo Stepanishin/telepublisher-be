@@ -54,6 +54,7 @@ export interface IAutoPostingRule {
   keywords?: string[];
   buttons?: { text: string; url: string }[];
   imagePosition?: 'top' | 'bottom';
+  sourceUrls?: string[]; // URLs to scrape content from
   nextScheduled?: Date | null;
   lastPublished?: Date | null;
   createdAt: Date;
@@ -137,6 +138,10 @@ const AutoPostingRuleSchema = new Schema<IAutoPostingRule>(
       type: String,
       enum: ['top', 'bottom'],
       default: 'bottom',
+    },
+    sourceUrls: {
+      type: [String],
+      default: [],
     },
     nextScheduled: {
       type: Date,

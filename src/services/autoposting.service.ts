@@ -2,6 +2,7 @@ import User from '../models/user.model';
 import { generateText, generateImage } from './openai.service';
 import { publishToChannel } from './telegram.service';
 import { calculateNextScheduledDate } from '../utils/dateUtils';
+import webScraperService from './webScraper.service';
 import logger from '../utils/logger';
 
 class AutoPostingService {
@@ -76,7 +77,93 @@ class AutoPostingService {
               ? ` Include these keywords if possible: ${rule.keywords.join(', ')}.`
               : '';
             
-            const prompt = `Create a post about ${topic} for a Telegram channel. Make it engaging and informative.${keywordsText} The post should be formatted for Telegram and be between 100-300 words.`;
+            let contextText = '';
+            let hasScrapedContent = false;
+            
+            // If source URLs are provided, scrape content from them
+            if (rule.sourceUrls && rule.sourceUrls.length > 0) {
+              try {
+                logger.info(`AutoPostingService: Scraping content from ${rule.sourceUrls.length} URLs for rule ${rule._id}`);
+                
+                const scrapedContents = await webScraperService.scrapeUrls(rule.sourceUrls);
+                
+                if (scrapedContents.length > 0) {
+                  hasScrapedContent = true;
+                  
+                  // Create detailed context from scraped content
+                  contextText = '\n\n--- IMPORTANT: Use the following RECENT INFORMATION as the PRIMARY BASIS for the post ---\n';
+                  
+                  scrapedContents.forEach((content, index) => {
+                    contextText += `\nArticle ${index + 1}:\n`;
+                    contextText += `Title: ${content.title}\n`;
+                    
+                    if (content.description) {
+                      contextText += `Description: ${content.description}\n`;
+                    }
+                    
+                    if (content.content && content.content.length > 0) {
+                      // Include more content for better context
+                      const contentPreview = content.content.length > 500 
+                        ? content.content.substring(0, 500) + '...'
+                        : content.content;
+                      contextText += `Content: ${contentPreview}\n`;
+                    }
+                    
+                    if (content.author) {
+                      contextText += `Author: ${content.author}\n`;
+                    }
+                    
+                    if (content.publishDate) {
+                      contextText += `Published: ${content.publishDate.toLocaleDateString()}\n`;
+                    }
+                    
+                    contextText += `Source: ${content.url}\n`;
+                    contextText += '---\n';
+                  });
+                  
+                  contextText += '\nIMPORTANT INSTRUCTIONS:\n';
+                  contextText += '- Base your post primarily on the information above\n';
+                  contextText += '- Synthesize insights from all articles\n';
+                  contextText += '- Include specific details, facts, or quotes from the sources\n';
+                  contextText += '- Reference the most interesting or newsworthy points\n';
+                  contextText += '- Make the post feel fresh and current\n';
+                  
+                  logger.info(`AutoPostingService: Successfully scraped ${scrapedContents.length} articles for rule ${rule._id}`);
+                } else {
+                  logger.warn(`AutoPostingService: No content could be scraped from provided URLs for rule ${rule._id}`);
+                }
+              } catch (error) {
+                logger.error(`AutoPostingService: Error scraping content for rule ${rule._id}`, {
+                  error: error instanceof Error ? error.message : 'Unknown error'
+                });
+                // Continue without scraped content
+              }
+            }
+            
+            // Create different prompts based on whether we have scraped content
+            let prompt: string;
+            
+            if (hasScrapedContent) {
+              prompt = `You are creating a Telegram post about "${topic}" based on recent information from reliable sources.${contextText}
+
+Create an engaging, informative Telegram post that:
+1. PRIORITIZES the information from the sources above
+2. Presents the key insights in an engaging way
+3. Uses a conversational tone suitable for Telegram
+4. Is between 150-300 words
+5. Includes relevant emojis where appropriate${keywordsText}
+
+Focus on making the content feel current, newsworthy, and valuable to readers.`;
+            } else {
+              prompt = `Create a post about ${topic} for a Telegram channel. Make it engaging and informative.${keywordsText} The post should be formatted for Telegram and be between 100-300 words.`;
+            }
+            
+            // Log the final prompt for debugging
+            logger.info(`AutoPostingService: Final prompt for rule ${rule._id}:`, {
+              hasScrapedContent,
+              promptLength: prompt.length,
+              prompt: prompt.substring(0, 500) + (prompt.length > 500 ? '...' : '')
+            });
             
             const generatedText = await generateText(prompt);
             let generatedImageUrl: string | null = null;
