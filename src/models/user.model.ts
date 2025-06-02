@@ -55,6 +55,9 @@ export interface IAutoPostingRule {
   buttons?: { text: string; url: string }[];
   imagePosition?: 'top' | 'bottom';
   sourceUrls?: string[]; // URLs to scrape content from
+  avoidDuplication?: boolean; // Check for content duplication
+  duplicateCheckDays?: number; // Number of days to check back for duplicates (default: 7)
+  contentHistory?: string[]; // Store content summaries for duplicate checking
   nextScheduled?: Date | null;
   lastPublished?: Date | null;
   createdAt: Date;
@@ -140,6 +143,18 @@ const AutoPostingRuleSchema = new Schema<IAutoPostingRule>(
       default: 'bottom',
     },
     sourceUrls: {
+      type: [String],
+      default: [],
+    },
+    avoidDuplication: {
+      type: Boolean,
+      default: false,
+    },
+    duplicateCheckDays: {
+      type: Number,
+      default: 7,
+    },
+    contentHistory: {
       type: [String],
       default: [],
     },

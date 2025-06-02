@@ -3,6 +3,7 @@ import { generateText, generateImage } from './openai.service';
 import { publishToChannel } from './telegram.service';
 import { calculateNextScheduledDate } from '../utils/dateUtils';
 import webScraperService from './webScraper.service';
+import contentDuplicationService from './contentDuplication.service';
 import logger from '../utils/logger';
 
 class AutoPostingService {
@@ -165,7 +166,52 @@ Focus on making the content feel current, newsworthy, and valuable to readers.`;
               prompt: prompt.substring(0, 500) + (prompt.length > 500 ? '...' : '')
             });
             
-            const generatedText = await generateText(prompt);
+            let generatedText = await generateText(prompt);
+            
+            // Check for content duplication if enabled
+            if (rule.avoidDuplication) {
+              logger.info(`AutoPostingService: Checking content duplication for rule ${rule._id}`);
+              
+              const duplicateCheck = await contentDuplicationService.checkContentDuplication(
+                generatedText,
+                rule.contentHistory || [],
+                0.7 // 70% similarity threshold
+              );
+              
+              if (duplicateCheck.isSimilar) {
+                logger.warn(`AutoPostingService: Duplicate content detected for rule ${rule._id}`, {
+                  similarity: duplicateCheck.similarity,
+                  reason: duplicateCheck.reason
+                });
+                
+                // Generate alternative content with anti-duplication instructions
+                const antiDupPrompt = contentDuplicationService.generateAntiDuplicationPrompt(
+                  prompt,
+                  generatedText
+                );
+                
+                logger.info(`AutoPostingService: Regenerating content with anti-duplication prompt for rule ${rule._id}`);
+                generatedText = await generateText(antiDupPrompt);
+                
+                // Check again (optional second check)
+                const secondCheck = await contentDuplicationService.checkContentDuplication(
+                  generatedText,
+                  rule.contentHistory || [],
+                  0.8 // Higher threshold for second check
+                );
+                
+                if (secondCheck.isSimilar) {
+                  logger.warn(`AutoPostingService: Second attempt also similar for rule ${rule._id}, proceeding anyway`, {
+                    similarity: secondCheck.similarity
+                  });
+                }
+              } else {
+                logger.info(`AutoPostingService: Content is unique for rule ${rule._id}`, {
+                  similarity: duplicateCheck.similarity
+                });
+              }
+            }
+            
             let generatedImageUrl: string | null = null;
             
             if (rule.imageGeneration) {
@@ -238,6 +284,28 @@ Focus on making the content feel current, newsworthy, and valuable to readers.`;
             
             // Update rule's lastPublished date
             rule.lastPublished = new Date();
+            
+            // Save content to history for duplication checking (only for successful posts)
+            if (rule.avoidDuplication && publishResult.success) {
+              const contentSummary = contentDuplicationService.createContentSummary(generatedText);
+              
+              if (!rule.contentHistory) {
+                rule.contentHistory = [];
+              }
+              
+              rule.contentHistory.push(contentSummary);
+              
+              // Clean up old content history
+              rule.contentHistory = contentDuplicationService.cleanContentHistory(
+                rule.contentHistory,
+                rule.duplicateCheckDays || 7
+              );
+              
+              logger.info(`AutoPostingService: Saved content to history for rule ${rule._id}`, {
+                historyLength: rule.contentHistory.length,
+                checkDays: rule.duplicateCheckDays || 7
+              });
+            }
             
             // Calculate and update next scheduled date
             rule.nextScheduled = calculateNextScheduledDate({

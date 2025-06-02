@@ -5,6 +5,7 @@ import { generateText, generateImage } from '../services/openai.service';
 import { publishToChannel } from '../services/telegram.service';
 import { calculateNextScheduledDate } from '../utils/dateUtils';
 import webScraperService from '../services/webScraper.service';
+import contentDuplicationService from '../services/contentDuplication.service';
 import logger from '../utils/logger';
 
 /**
@@ -124,7 +125,9 @@ export const createAutoPostingRule = async (req: Request, res: Response): Promis
       imageGeneration,
       keywords,
       buttons,
-      sourceUrls
+      sourceUrls,
+      avoidDuplication,
+      duplicateCheckDays
     } = req.body;
 
     // Validate required fields
@@ -208,6 +211,9 @@ export const createAutoPostingRule = async (req: Request, res: Response): Promis
       keywords: keywords || [],
       buttons: buttons || [],
       sourceUrls: sourceUrls || [],
+      avoidDuplication: avoidDuplication || false,
+      duplicateCheckDays: duplicateCheckDays || 7,
+      contentHistory: [],
       nextScheduled: calculateNextScheduledDate({
         frequency,
         customInterval,
@@ -303,7 +309,9 @@ export const updateAutoPostingRule = async (req: Request, res: Response): Promis
       imageGeneration,
       keywords,
       buttons,
-      sourceUrls
+      sourceUrls,
+      avoidDuplication,
+      duplicateCheckDays
     } = req.body;
 
     // Update fields if provided
@@ -379,6 +387,15 @@ export const updateAutoPostingRule = async (req: Request, res: Response): Promis
       } else {
         rule.sourceUrls = [];
       }
+    }
+    
+    // Handle duplication settings
+    if (avoidDuplication !== undefined) {
+      rule.avoidDuplication = avoidDuplication;
+    }
+    
+    if (duplicateCheckDays !== undefined) {
+      rule.duplicateCheckDays = Math.max(1, Math.min(30, duplicateCheckDays)); // Limit between 1-30 days
     }
     
     // Recalculate next scheduled date if needed
@@ -709,7 +726,39 @@ Focus on making the content feel current, newsworthy, and valuable to readers.`;
       prompt: prompt.substring(0, 500) + (prompt.length > 500 ? '...' : '')
     });
     
-    const generatedText = await generateText(prompt);
+    let generatedText = await generateText(prompt);
+    
+    // Check for content duplication if enabled
+    if (rule.avoidDuplication) {
+      logger.info(`AutoPostingController: Checking content duplication for rule ${rule._id}`);
+      
+      const duplicateCheck = await contentDuplicationService.checkContentDuplication(
+        generatedText,
+        rule.contentHistory || [],
+        0.7 // 70% similarity threshold
+      );
+      
+      if (duplicateCheck.isSimilar) {
+        logger.warn(`AutoPostingController: Duplicate content detected for rule ${rule._id}`, {
+          similarity: duplicateCheck.similarity,
+          reason: duplicateCheck.reason
+        });
+        
+        // Generate alternative content with anti-duplication instructions
+        const antiDupPrompt = contentDuplicationService.generateAntiDuplicationPrompt(
+          prompt,
+          generatedText
+        );
+        
+        logger.info(`AutoPostingController: Regenerating content with anti-duplication prompt for rule ${rule._id}`);
+        generatedText = await generateText(antiDupPrompt);
+      } else {
+        logger.info(`AutoPostingController: Content is unique for rule ${rule._id}`, {
+          similarity: duplicateCheck.similarity
+        });
+      }
+    }
+    
     let generatedImageUrl: string | null = null;
     
     if (rule.imageGeneration) {
@@ -765,6 +814,28 @@ Focus on making the content feel current, newsworthy, and valuable to readers.`;
 
     // Update rule's lastPublished date
     rule.lastPublished = new Date();
+    
+    // Save content to history for duplication checking (only for successful posts)
+    if (rule.avoidDuplication && publishResult.success) {
+      const contentSummary = contentDuplicationService.createContentSummary(generatedText);
+      
+      if (!rule.contentHistory) {
+        rule.contentHistory = [];
+      }
+      
+      rule.contentHistory.push(contentSummary);
+      
+      // Clean up old content history
+      rule.contentHistory = contentDuplicationService.cleanContentHistory(
+        rule.contentHistory,
+        rule.duplicateCheckDays || 7
+      );
+      
+      logger.info(`AutoPostingController: Saved content to history for rule ${rule._id}`, {
+        historyLength: rule.contentHistory.length,
+        checkDays: rule.duplicateCheckDays || 7
+      });
+    }
     
     // Calculate and update next scheduled date
     rule.nextScheduled = calculateNextScheduledDate({
