@@ -5,7 +5,7 @@ import User from '../models/user.model';
 import { publishToTelegram } from './telegram.service';
 import { TelegramService } from './telegram.service';
 import mongoose from 'mongoose';
-import { cleanupOldImages, cleanupDraftMetadata } from './cleanup.service';
+import { cleanupOldImages, cleanupDraftMetadata, moveMisplacedDraftImages } from './cleanup.service';
 import autoPostingService from './autoposting.service';
 
 // Set для хранения ID постов, которые сейчас обрабатываются
@@ -68,6 +68,11 @@ class SchedulerService {
     cleanupDraftMetadata()
       .then(() => console.log('Draft metadata cleanup completed'))
       .catch(err => console.error('Error during draft metadata cleanup:', err));
+    
+    // Move any misplaced draft images to the correct location
+    moveMisplacedDraftImages()
+      .then(() => console.log('Draft image relocation completed'))
+      .catch(err => console.error('Error during draft image relocation:', err));
     
     // Run an initial cleanup on startup
     cleanupOldImages()

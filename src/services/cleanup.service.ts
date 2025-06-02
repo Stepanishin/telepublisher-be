@@ -69,19 +69,28 @@ const isImageUsedInDrafts = async (filename: string): Promise<boolean> => {
       return true; // Для безопасности возвращаем true, чтобы не удалять файл
     }
 
-    // Шаблоны URL, которые могут содержать этот файл
+    // Расширенные шаблоны URL, которые могут содержать этот файл
     const possibleUrls = [
       `/uploads/${filename}`,
       `uploads/${filename}`,
       `/uploads/drafts/${filename}`,
-      `uploads/drafts/${filename}`
+      `uploads/drafts/${filename}`,
+      // Добавляем варианты с доменом
+      `http://localhost:5000/uploads/${filename}`,
+      `http://localhost:5000/uploads/drafts/${filename}`,
+      // Добавляем варианты с production URL
+      `https://evgeniis-macbook-pro.tail10cf98.ts.net/uploads/${filename}`,
+      `https://evgeniis-macbook-pro.tail10cf98.ts.net/uploads/drafts/${filename}`
     ];
 
     // Ищем пользователей, у которых в черновиках используется это изображение
     const usersWithImageInDrafts = await User.find({
       $or: [
         { 'drafts.imageUrl': { $in: possibleUrls } },
-        { 'drafts.imageUrls': { $in: possibleUrls } }
+        { 'drafts.imageUrls': { $in: possibleUrls } },
+        // Дополнительная проверка: ищем по частичному совпадению имени файла
+        { 'drafts.imageUrl': { $regex: filename, $options: 'i' } },
+        { 'drafts.imageUrls': { $regex: filename, $options: 'i' } }
       ]
     }).countDocuments();
     
@@ -175,6 +184,12 @@ export const cleanupOldImages = async (): Promise<void> => {
           continue;
         }
         
+        // Additional safety check: skip any file that contains "drafts" in its name or path
+        if (file.includes('drafts') || filePath.includes('drafts')) {
+          console.log(`Skipping file with 'drafts' in name/path: ${file}`);
+          continue;
+        }
+        
         // Get the creation date of the image (either from timestamp or mtime)
         const creationDate = await getImageCreationDate(file, fileStat);
         
@@ -210,5 +225,78 @@ export const cleanupOldImages = async (): Promise<void> => {
     console.log(`Cleanup completed. Deleted ${deletedCount} old images. Skipped ${skippedCount} images used in drafts.`);
   } catch (error) {
     console.error('Error during image cleanup:', error);
+  }
+};
+
+/**
+ * Move any draft images that are incorrectly stored in the main uploads folder to the drafts folder
+ * This function helps fix the issue where draft images sometimes end up in the wrong location
+ */
+export const moveMisplacedDraftImages = async (): Promise<void> => {
+  try {
+    if (!fs.existsSync(uploadsDir)) {
+      console.log('Uploads directory does not exist. Nothing to move.');
+      return;
+    }
+
+    console.log('Checking for misplaced draft images in main uploads folder...');
+    
+    // Get all files in main uploads directory (excluding subdirectories)
+    const files = await readdir(uploadsDir);
+    let movedCount = 0;
+    
+    // Process each file
+    for (const file of files) {
+      try {
+        const filePath = path.join(uploadsDir, file);
+        const fileStat = await stat(filePath);
+        
+        // Skip directories
+        if (fileStat.isDirectory()) {
+          continue;
+        }
+        
+        // Check if this file is used in drafts
+        const isUsedInDrafts = await isImageUsedInDrafts(file);
+        
+        if (isUsedInDrafts) {
+          // This file is used in drafts but is in the wrong location
+          // Move it to the drafts folder
+          const draftsFilePath = path.join(draftsDir, file);
+          
+          // Check if file already exists in drafts folder
+          if (!fs.existsSync(draftsFilePath)) {
+            // Move the file
+            fs.renameSync(filePath, draftsFilePath);
+            movedCount++;
+            console.log(`Moved draft image from main folder to drafts folder: ${file}`);
+            
+            // Remove any timestamp file for this image (since it's now a draft)
+            const timestampPath = path.join(metadataDir, `${file}.meta`);
+            if (fs.existsSync(timestampPath)) {
+              fs.unlinkSync(timestampPath);
+              console.log(`Removed timestamp file for moved draft image: ${file}`);
+            }
+          } else {
+            // File already exists in drafts folder, remove the duplicate from main folder
+            fs.unlinkSync(filePath);
+            console.log(`Removed duplicate draft image from main folder: ${file}`);
+            
+            // Remove any timestamp file
+            const timestampPath = path.join(metadataDir, `${file}.meta`);
+            if (fs.existsSync(timestampPath)) {
+              fs.unlinkSync(timestampPath);
+              console.log(`Removed timestamp file for duplicate draft image: ${file}`);
+            }
+          }
+        }
+      } catch (fileError) {
+        console.error(`Error processing file ${file} for draft relocation:`, fileError);
+      }
+    }
+    
+    console.log(`Draft image relocation completed. Moved/cleaned ${movedCount} images.`);
+  } catch (error) {
+    console.error('Error during draft image relocation:', error);
   }
 }; 
