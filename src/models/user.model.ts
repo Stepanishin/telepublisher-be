@@ -52,6 +52,8 @@ export interface IAutoPostingRule {
   channelId: mongoose.Types.ObjectId | string;
   imageGeneration: boolean;
   keywords?: string[];
+  buttons?: { text: string; url: string }[];
+  imagePosition?: 'top' | 'bottom';
   nextScheduled?: Date | null;
   lastPublished?: Date | null;
   createdAt: Date;
@@ -66,6 +68,8 @@ export interface IAutoPostingHistory {
   postId?: string;
   content?: string;
   imageUrl?: string;
+  buttons?: { text: string; url: string }[];
+  imagePosition?: 'top' | 'bottom';
   status: 'success' | 'failed';
   error?: string;
   publishedAt: Date;
@@ -122,6 +126,18 @@ const AutoPostingRuleSchema = new Schema<IAutoPostingRule>(
       type: [String],
       default: [],
     },
+    buttons: {
+      type: [{
+        text: String,
+        url: String
+      }],
+      default: [],
+    },
+    imagePosition: {
+      type: String,
+      enum: ['top', 'bottom'],
+      default: 'bottom',
+    },
     nextScheduled: {
       type: Date,
       default: null,
@@ -156,6 +172,17 @@ const AutoPostingHistorySchema = new Schema<IAutoPostingHistory>(
     },
     imageUrl: {
       type: String,
+    },
+    buttons: {
+      type: [{
+        text: String,
+        url: String
+      }],
+      default: [],
+    },
+    imagePosition: {
+      type: String,
+      enum: ['top', 'bottom'],
     },
     status: {
       type: String,

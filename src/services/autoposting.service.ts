@@ -93,7 +93,9 @@ class AutoPostingService {
                   ? `Create an image related to: ${sanitizedTopic}` 
                   : `Create an abstract image related to finance and technology`;
                 
+                logger.info(`AutoPostingService: Generating image for rule ${rule._id} with prompt: ${imagePrompt}`);
                 generatedImageUrl = await generateImage(imagePrompt);
+                logger.info(`AutoPostingService: Successfully generated image for rule ${rule._id}. URL: ${generatedImageUrl}`);
               } catch (error) {
                 logger.warn(`AutoPostingService: Failed to generate image for rule ${rule._id}, continuing without image`, {
                   userId: user._id,
@@ -117,12 +119,31 @@ class AutoPostingService {
             }
             
             // Publish to Telegram
+            logger.info(`AutoPostingService: Publishing to Telegram for rule ${rule._id}`, {
+              channelUsername: channel.username,
+              hasImage: !!generatedImageUrl,
+              imagePosition: rule.imagePosition || 'bottom',
+              contentLength: generatedText.length
+            });
+            
             const publishResult = await publishToChannel({
               channelUsername: channel.username,
               botToken: channel.botToken || '',
               text: generatedText,
-              imageUrl: generatedImageUrl || undefined
+              imageUrl: generatedImageUrl || undefined,
+              buttons: rule.buttons,
+              imagePosition: rule.imagePosition || 'bottom' // Use 'bottom' as default to show image as link preview
             });
+            
+            if (!publishResult.success) {
+              logger.error(`AutoPostingService: Failed to publish to Telegram for rule ${rule._id}`, {
+                error: publishResult.error
+              });
+            } else {
+              logger.info(`AutoPostingService: Successfully published to Telegram for rule ${rule._id}`, {
+                messageId: publishResult.messageId
+              });
+            }
             
             // Update user's credits
             user.aiCredits -= requiredCredits;
@@ -151,6 +172,8 @@ class AutoPostingService {
               postId: publishResult.messageId,
               content: generatedText,
               imageUrl: generatedImageUrl || undefined,
+              buttons: rule.buttons,
+              imagePosition: rule.imagePosition || 'bottom',
               status: publishResult.success ? 'success' : 'failed',
               error: publishResult.success ? undefined : publishResult.error,
               publishedAt: new Date()

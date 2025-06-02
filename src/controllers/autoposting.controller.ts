@@ -121,7 +121,8 @@ export const createAutoPostingRule = async (req: Request, res: Response): Promis
       preferredDays,
       channelId,
       imageGeneration,
-      keywords
+      keywords,
+      buttons
     } = req.body;
 
     // Validate required fields
@@ -188,6 +189,7 @@ export const createAutoPostingRule = async (req: Request, res: Response): Promis
       channelId,
       imageGeneration: imageGeneration !== undefined ? imageGeneration : false,
       keywords: keywords || [],
+      buttons: buttons || [],
       nextScheduled: calculateNextScheduledDate({
         frequency,
         customInterval,
@@ -281,7 +283,8 @@ export const updateAutoPostingRule = async (req: Request, res: Response): Promis
       preferredDays,
       channelId,
       imageGeneration,
-      keywords
+      keywords,
+      buttons
     } = req.body;
 
     // Update fields if provided
@@ -336,6 +339,7 @@ export const updateAutoPostingRule = async (req: Request, res: Response): Promis
     
     if (imageGeneration !== undefined) rule.imageGeneration = imageGeneration;
     if (keywords) rule.keywords = keywords;
+    if (buttons !== undefined) rule.buttons = buttons;
     
     // Recalculate next scheduled date if needed
     if (shouldRecalculateNextScheduled) {
@@ -624,7 +628,8 @@ export const executeAutoPostingRule = async (req: Request, res: Response): Promi
       channelUsername: channel.username,
       botToken: channel.botToken || '',
       text: generatedText,
-      imageUrl: generatedImageUrl || undefined
+      imageUrl: generatedImageUrl || undefined,
+      buttons: rule.buttons
     });
 
     // Update user's credits
@@ -654,6 +659,7 @@ export const executeAutoPostingRule = async (req: Request, res: Response): Promi
       postId: publishResult.messageId,
       content: generatedText,
       imageUrl: generatedImageUrl || undefined,
+      buttons: rule.buttons,
       status: publishResult.success ? 'success' : 'failed',
       error: publishResult.success ? undefined : publishResult.error,
       publishedAt: new Date()

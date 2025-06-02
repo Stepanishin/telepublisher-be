@@ -83,6 +83,14 @@ export const generateText = async (prompt: string): Promise<string> => {
  */
 export const generateImage = async (prompt: string): Promise<string> => {
   try {
+    console.log(`[OPENAI SERVICE] Generating image with prompt: "${prompt.substring(0, 100)}..."`);
+    
+    // Initialize OpenAI client
+    const OpenAI = require('openai');
+    const openai = new OpenAI({
+      apiKey: openaiApiKey,
+    });
+    
     // Create diverse image styles
     const imageStyles = [
       'photorealistic, high detail, 8k resolution, professional photography',
@@ -112,26 +120,36 @@ export const generateImage = async (prompt: string): Promise<string> => {
     // Enhanced prompt with style and perspective
     const enhancedPrompt = `${prompt}, ${randomStyle}, ${randomPerspective}`;
     
-    const response = await axios.post(
-      'https://api.openai.com/v1/images/generations',
-      {
-        prompt: enhancedPrompt,
-        n: 1,
-        size: '1024x1024',
-        response_format: 'url',
-        style: Math.random() > 0.5 ? 'vivid' : 'natural', // Randomly choose between vivid and natural styles
-        quality: 'hd'
-      },
-      {
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${openaiApiKey}`
-        }
-      }
-    );
+    console.log(`[OPENAI SERVICE] Enhanced image prompt: "${enhancedPrompt.substring(0, 100)}..."`);
+    
+    // Generate image with DALL-E using the OpenAI client
+    const response = await openai.images.generate({
+      model: "dall-e-3",
+      prompt: enhancedPrompt,
+      n: 1,
+      size: "1024x1024",
+      quality: "standard",
+      response_format: "url"
+    });
 
     // Extract the generated image URL from the response
-    const imageUrl = response.data.data[0].url;
+    const imageUrl = response.data?.[0]?.url || '';
+    
+    console.log(`[OPENAI SERVICE] Generated image URL: ${imageUrl}`);
+    
+    if (!imageUrl) {
+      throw new Error('Error getting image URL');
+    }
+    
+    // Проверяем валидность URL
+    try {
+      new URL(imageUrl);
+      console.log(`[OPENAI SERVICE] Image URL is valid`);
+    } catch (e) {
+      console.error(`[OPENAI SERVICE] Invalid image URL format: ${imageUrl}`);
+      throw new Error('Invalid image URL format');
+    }
+
     return imageUrl;
   } catch (error) {
     console.error('Error generating image with OpenAI:', error);

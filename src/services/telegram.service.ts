@@ -249,12 +249,18 @@ const sendMessageWithPreview = async (
   imageUrl: string,
   replyMarkup?: any
 ): Promise<TelegramResponse> => {
+  console.log(`[TELEGRAM SERVICE] sendMessageWithPreview - Using image URL: ${imageUrl}`);
+  
+  // Добавляем невидимую ссылку на изображение в конце текста
+  // Это гарантирует, что Telegram попытается отобразить предпросмотр этой ссылки
+  const textWithImageLink = `${text}\n\n<a href="${imageUrl}">&#8205;</a>`;
+  
   const response = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       chat_id: chatId,
-      text: text,
+      text: textWithImageLink,
       parse_mode: 'HTML',
       link_preview_options: {
         is_disabled: false,
@@ -266,7 +272,9 @@ const sendMessageWithPreview = async (
     })
   });
   
-  return await response.json();
+  const responseData = await response.json();
+  console.log(`[TELEGRAM SERVICE] sendMessageWithPreview response:`, JSON.stringify(responseData));
+  return responseData;
 };
 
 /**
@@ -277,8 +285,32 @@ export const publishToChannel = async (params: {
   botToken: string;
   text: string;
   imageUrl?: string;
+  buttons?: { text: string; url: string }[];
+  imagePosition?: 'top' | 'bottom';
 }): Promise<{ success: boolean; messageId?: string; error?: string }> => {
   try {
+    console.log(`[TELEGRAM SERVICE] publishToChannel - Starting with params:`, {
+      channelUsername: params.channelUsername,
+      hasImage: !!params.imageUrl,
+      imagePosition: params.imagePosition || 'top',
+      textLength: params.text.length,
+      hasButtons: params.buttons && params.buttons.length > 0
+    });
+    
+    if (params.imageUrl) {
+      console.log(`[TELEGRAM SERVICE] Image URL: ${params.imageUrl}`);
+      
+      // Проверяем, что URL изображения валиден
+      try {
+        const imageUrlObj = new URL(params.imageUrl);
+        if (!imageUrlObj.protocol.startsWith('http')) {
+          console.warn(`[TELEGRAM SERVICE] Invalid image URL protocol: ${imageUrlObj.protocol}`);
+        }
+      } catch (e) {
+        console.warn(`[TELEGRAM SERVICE] Invalid image URL format: ${params.imageUrl}`);
+      }
+    }
+    
     // Prepare chatId
     let chatId = params.channelUsername;
     if (!chatId.startsWith('@') && !chatId.match(/^-?\d+$/)) {
@@ -287,8 +319,26 @@ export const publishToChannel = async (params: {
     
     let response: TelegramResponse;
     
-    // If there's an image, handle potential caption length limit (1024 chars for Telegram)
-    if (params.imageUrl) {
+    // If there's an image and the position is bottom, use link preview approach
+    if (params.imageUrl && params.imagePosition === 'bottom') {
+      console.log(`[TELEGRAM SERVICE] Using bottom position with message preview for image`);
+      
+      // Use sendMessageWithPreview to show image at the bottom
+      response = await sendMessageWithPreview(
+        params.botToken,
+        chatId,
+        params.text,
+        params.imageUrl,
+        params.buttons ? {
+          inline_keyboard: params.buttons.map(button => [{
+            text: button.text,
+            url: button.url
+          }])
+        } : undefined
+      );
+    }
+    // If there's an image with top position (default), handle caption length limit
+    else if (params.imageUrl) {
       const MAX_CAPTION_LENGTH = 1000; // Slightly less than the actual limit for safety
       
       if (params.text.length > MAX_CAPTION_LENGTH) {
@@ -298,7 +348,13 @@ export const publishToChannel = async (params: {
           params.botToken,
           chatId,
           caption,
-          params.imageUrl
+          params.imageUrl,
+          params.buttons ? {
+            inline_keyboard: params.buttons.map(button => [{
+              text: button.text,
+              url: button.url
+            }])
+          } : undefined
         );
         
         // Then send the full text as a separate message
@@ -313,7 +369,13 @@ export const publishToChannel = async (params: {
           params.botToken,
           chatId,
           params.text,
-          params.imageUrl
+          params.imageUrl,
+          params.buttons ? {
+            inline_keyboard: params.buttons.map(button => [{
+              text: button.text,
+              url: button.url
+            }])
+          } : undefined
         );
       }
     } else {
@@ -321,7 +383,13 @@ export const publishToChannel = async (params: {
       response = await sendMessage(
         params.botToken,
         chatId,
-        params.text
+        params.text,
+        params.buttons ? {
+          inline_keyboard: params.buttons.map(button => [{
+            text: button.text,
+            url: button.url
+          }])
+        } : undefined
       );
     }
     
