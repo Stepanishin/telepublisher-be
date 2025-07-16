@@ -172,9 +172,10 @@ export class CreditService {
       
       // Обрабатываем кредиты
       if (subscriptionType === SubscriptionType.FREE) {
-        // При переходе на бесплатный план - просто устанавливаем максимум для FREE
-        console.log(`[UpdateSubscription] Setting credits to FREE tier amount: ${SUBSCRIPTION_CREDITS[SubscriptionType.FREE]}`);
-        user.aiCredits = SUBSCRIPTION_CREDITS[SubscriptionType.FREE];
+        // При переходе на бесплатный план - СОХРАНЯЕМ текущие кредиты
+        // Кредиты принадлежат пользователю и не должны уменьшаться
+        console.log(`[UpdateSubscription] Switching to FREE plan - preserving existing ${currentCredits} credits`);
+        user.aiCredits = currentCredits; // Сохраняем текущие кредиты
       } else {
         // При переходе на платный план или обновлении платного плана
         if (currentSubscription === subscriptionType) {
@@ -344,8 +345,8 @@ export class CreditService {
       }
     }
     
-    // 3. Reset credits for users with expired reset dates
-    // but not marked for downgrade (normal subscription expiry)
+    // 3. Deactivate expired subscriptions but PRESERVE credits
+    // Credits should never be reset to zero - they belong to the user
     const resetResult = await User.updateMany(
       { 
         creditsResetDate: { $lte: now },
@@ -354,14 +355,13 @@ export class CreditService {
       },
       { 
         $set: { 
-          aiCredits: 0,
           'subscription.isActive': false 
         } 
       }
     );
     
     totalProcessed += resetResult.modifiedCount;
-    console.log(`[Scheduler] Reset credits for ${resetResult.modifiedCount} users without downgrade mark`);
+    console.log(`[Scheduler] Deactivated ${resetResult.modifiedCount} expired subscriptions (credits preserved)`);
     
     console.log(`[Scheduler] Finished processing ${totalProcessed} subscriptions`);
     return totalProcessed;
