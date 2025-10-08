@@ -86,7 +86,7 @@ export const verifyTelegramLogin = async (req: Request, res: Response): Promise<
     const token = jwt.sign(
       { id: user._id },
       config.jwtSecret,
-      { expiresIn: '30d' } // Longer expiration for Telegram logins
+      { expiresIn: '365d' } // Maximum expiration: 1 year for better UX
     );
 
     res.status(200).json({
